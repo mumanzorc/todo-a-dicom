@@ -1,0 +1,76 @@
+name: todo-a-dicom
+services:
+  app:
+    container_name: todo_a_dicom
+    build: .
+    restart: unless-stopped
+    ports: ["8866:8866"]
+    env_file: .env
+    environment:
+      PORT: 8866
+      SECURE_COOKIE: "false"
+      PROTOCOL: https
+      WEBHOOK_URL: https://casa.auditus.cl
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [dicom_net]
+
+  api:
+    build: ./services/api
+    restart: unless-stopped
+    env_file: .env
+    volumes: ["dicom_files:/data/uploads"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      orthanc: { condition: service_started }
+    networks: [dicom_net]
+
+  worker:
+    build: ./services/api
+    command: celery -A worker.celery worker --loglevel=INFO --concurrency=2
+    restart: unless-stopped
+    env_file: .env
+    volumes: ["dicom_files:/data/uploads"]
+    depends_on: [redis, postgres]
+    networks: [dicom_net]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dicomflow
+      POSTGRES_USER: dicom
+      POSTGRES_PASSWORD: change-me
+    volumes: ["postgres_data:/var/lib/postgresql/data", "./infra/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U dicom -d dicomflow"], interval: 10s, timeout: 5s, retries: 8 }
+    networks: [dicom_net]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes: ["redis_data:/data"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 3s, retries: 8 }
+    networks: [dicom_net]
+
+  orthanc:
+    image: orthancteam/orthanc:24.6.1
+    restart: unless-stopped
+    environment:
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"admin":"change-me"}'
+      ORTHANC__POSTGRESQL__HOST: postgres
+      ORTHANC__POSTGRESQL__DATABASE: dicomflow
+      ORTHANC__POSTGRESQL__USERNAME: dicom
+      ORTHANC__POSTGRESQL__PASSWORD: change-me
+      ORTHANC__POSTGRESQL__ENABLE_INDEX: "true"
+      ORTHANC__POSTGRESQL__ENABLE_STORAGE: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes: ["orthanc_data:/var/lib/orthanc/db"]
+    networks: [dicom_net]
+
+networks: { dicom_net: {} }
+volumes: { postgres_data: {}, redis_data: {}, dicom_files: {}, orthanc_data: {} }
