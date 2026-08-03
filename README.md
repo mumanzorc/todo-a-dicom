@@ -6,7 +6,7 @@ Plataforma clínica y documental para convertir JPG, PNG, TIFF, BMP, TXT, CSV y 
 
 1. Copiar `.env.example` a `.env` y reemplazar contraseñas y secretos.
 2. Ejecutar `docker compose up -d --build`.
-3. Abrir `http://localhost:8866`. En producción, el proxy TLS publica `https://casa.auditus.cl` y reenvía al puerto 8866.
+3. Abrir `http://localhost:8866`. En producción, el proxy TLS publica `https://example.com` y reenvía al puerto 8866.
 
 El servicio web solicitado se llama `todo_a_dicom`, publica el puerto 8866 y tiene `restart: unless-stopped`. API y workers no tienen nombre fijo, por lo que se pueden escalar con `docker compose up -d --scale api=3 --scale worker=5`.
 

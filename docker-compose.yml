@@ -10,7 +10,7 @@ services:
       PORT: 8866
       SECURE_COOKIE: "false"
       PROTOCOL: https
-      WEBHOOK_URL: https://casa.auditus.cl
+      WEBHOOK_URL: https://example.com
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
