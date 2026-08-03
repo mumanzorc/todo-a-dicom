@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from worker import convert_file
 
 app = FastAPI(title="DICOM Flow API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("WEBHOOK_URL", "https://casa.auditus.cl")], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("WEBHOOK_URL", "https://example.com")], allow_methods=["*"], allow_headers=["*"])
 storage = Path(os.getenv("STORAGE_PATH", "/data/uploads")); storage.mkdir(parents=True, exist_ok=True)
 allowed = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".txt", ".csv", ".pdf", ".dcm"}
 
