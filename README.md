@@ -29,6 +29,15 @@ docker compose ps
 - Procesamiento asíncrono mediante Celery y Redis.
 - Seguimiento automático de estados: en cola, procesando, disponible o fallida.
 - Comunicación web–API a través de un proxy interno, sin publicar directamente el puerto 8000.
+- Formato automático y validación inmediata de RUN/RUT en el formulario de pacientes.
+- Fecha de nacimiento inicializada con la fecha local actual y validación contra fechas futuras.
+- Núcleo CMBD persistido como JSONB con estructura basada en la Norma Técnica EIS de DEIS/MINSAL.
+
+### Estructura CMBD/EIS implementada
+
+El registro de pacientes conserva las clases de identificación de la persona, datos demográficos, situación de la persona, nivel de instrucción, previsión, contacto y ubicación/dirección. Los dominios controlados guardan código y glosa; la fecha CMBD se representa como `DD-MM-AAAA`. La fuente normativa es la [Norma Técnica de Estándares de Información en Salud (EIS) del DEIS](https://deis.minsal.cl/norma-tecnica-de-estandares-de-informacion-en-salud-eis/).
+
+Esta implementación proporciona una base de interoperabilidad y trazabilidad de campos. No constituye certificación, homologación ni validación oficial del Ministerio de Salud.
 
 Los módulos Exámenes, Visor DICOM, Documentos, CRM, Reportes y Auditoría se muestran como próxima fase y no presentan acciones simuladas.
 

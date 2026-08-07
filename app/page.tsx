@@ -11,6 +11,7 @@ type Patient = {
   birth_date?: string;
   email?: string;
   phone?: string;
+  cmbd?: Record<string, unknown>;
   created_at: string;
 };
 
@@ -52,6 +53,33 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 function formatDate(value?: string) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("es-CL", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function todayForInput() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function formatRutInput(value: string) {
+  const clean = value.toUpperCase().replace(/[^0-9K]/g, "").slice(0, 10);
+  if (clean.length < 2) return clean;
+  return `${clean.slice(0, -1)}-${clean.slice(-1)}`;
+}
+
+function isValidRut(value: string) {
+  const clean = value.toUpperCase().replace(/\./g, "").replace(/-/g, "");
+  if (!/^\d{1,9}[0-9K]$/.test(clean)) return false;
+  const body = clean.slice(0, -1);
+  const verifier = clean.slice(-1);
+  let total = 0;
+  let factor = 2;
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    total += Number(body[index]) * factor;
+    factor = factor === 7 ? 2 : factor + 1;
+  }
+  const result = 11 - (total % 11);
+  const expected = result === 11 ? "0" : result === 10 ? "K" : String(result);
+  return verifier === expected;
 }
 
 export default function Home() {
@@ -177,18 +205,28 @@ function Patients({ patients, searchRef, onCreated, notify }: { patients: Patien
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [identifierType, setIdentifierType] = useState("RUT");
+  const [identifierValue, setIdentifierValue] = useState("");
   const filtered = useMemo(() => patients.filter((patient) =>
     `${patient.given_names} ${patient.family_names} ${patient.identifier_value} ${patient.email ?? ""}`.toLowerCase().includes(query.toLowerCase())
   ), [patients, query]);
+  const rutComplete = identifierType === "RUT" && identifierValue.replace(/\D|K/gi, "").length >= 2;
+  const rutValid = identifierType === "RUT" && isValidRut(identifierValue);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (identifierType === "RUT" && !rutValid) {
+      notify("El RUT no es válido; revisa el número y el dígito verificador", "error");
+      return;
+    }
     setSaving(true);
     const form = new FormData(event.currentTarget);
-    const payload = Object.fromEntries(form.entries());
+    const payload = { ...Object.fromEntries(form.entries()), identifier_type: identifierType, identifier_value: identifierValue };
     try {
       await api<Patient>("v1/patients", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       event.currentTarget.reset();
+      setIdentifierType("RUT");
+      setIdentifierValue("");
       setShowForm(false);
       notify("Paciente registrado correctamente");
       await onCreated();
@@ -203,10 +241,42 @@ function Patients({ patients, searchRef, onCreated, notify }: { patients: Patien
       <div className="toolbar"><label>⌕<input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nombre, RUT o correo"/></label></div>
       {filtered.length ? <div className="tableWrap"><table><thead><tr><th>Paciente</th><th>Identificador</th><th>Contacto</th><th>Registro</th></tr></thead><tbody>{filtered.map((patient) => <tr key={patient.id}><td><div className="identity"><span className="patientDot">{patient.given_names[0]}{patient.family_names[0]}</span><div><strong>{patient.given_names} {patient.family_names}</strong><small>{patient.id.slice(0, 8)}</small></div></div></td><td><strong>{patient.identifier_value}</strong><small>{patient.identifier_type}</small></td><td>{patient.email || patient.phone || "Sin contacto"}</td><td>{formatDate(patient.created_at)}</td></tr>)}</tbody></table></div> : <EmptyState title="No hay pacientes que coincidan" text="Ajusta la búsqueda o registra un paciente nuevo."/>}
     </article>
-    {showForm && <article className="panel formPanel"><div className="panelHead"><div><h2>Nuevo paciente</h2><p>Los campos marcados son obligatorios</p></div></div><form onSubmit={submit}>
-      <div className="formGrid"><label>Nombres *<input name="given_names" required maxLength={120}/></label><label>Apellidos *<input name="family_names" required maxLength={120}/></label><label>Tipo de identificación *<select name="identifier_type" defaultValue="RUT"><option value="RUT">RUT</option><option value="PASSPORT">Pasaporte</option><option value="NATIONAL_ID">Documento extranjero</option><option value="INTERNAL">Identificador interno</option><option value="OTHER">Otro</option></select></label><label>Número de identificación *<input name="identifier_value" required maxLength={80}/></label><label>Fecha de nacimiento<input name="birth_date" type="date"/></label><label>Sexo<select name="sex" defaultValue=""><option value="">Sin especificar</option><option>Femenino</option><option>Masculino</option><option>Otro</option></select></label><label>Correo<input name="email" type="email" maxLength={254}/></label><label>Teléfono<input name="phone" maxLength={40}/></label></div>
-      <div className="formActions"><button type="button" className="secondary" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Guardando…" : "Guardar paciente"}</button></div>
-    </form></article>}
+    {showForm && <article className="panel formPanel">
+      <div className="panelHead"><div><h2>Nuevo paciente</h2><p>Estructura base CMBD según norma EIS del DEIS</p></div><a className="standardLink" href="https://deis.minsal.cl/norma-tecnica-de-estandares-de-informacion-en-salud-eis/" target="_blank" rel="noreferrer">Consultar norma ↗</a></div>
+      <form onSubmit={submit}>
+        <fieldset><legend>Identificación de la persona</legend><div className="formGrid">
+          <label>Nombres *<input name="given_names" required maxLength={120}/></label>
+          <label>Primer apellido *<input name="family_names" required maxLength={120}/></label>
+          <label>Segundo apellido<input name="second_family_name" maxLength={120}/></label>
+          <label>Nombre social<input name="social_name" maxLength={120}/></label>
+          <label>Tipo de identificación *<select name="identifier_type" value={identifierType} onChange={(event) => { setIdentifierType(event.target.value); setIdentifierValue(""); }}><option value="RUT">RUN/RUT principal</option><option value="PASSPORT">Pasaporte</option><option value="NATIONAL_ID">Documento del país de origen</option><option value="INTERNAL">Identificador provisorio</option><option value="OTHER">Otro</option></select></label>
+          <label>Número de identificación *<input name="identifier_value" value={identifierValue} onChange={(event) => setIdentifierValue(identifierType === "RUT" ? formatRutInput(event.target.value) : event.target.value)} required maxLength={80} inputMode={identifierType === "RUT" ? "text" : undefined} placeholder={identifierType === "RUT" ? "12345678-5" : "Número de documento"}/>{identifierType === "RUT" && identifierValue && <span className={`rutFeedback ${rutValid ? "valid" : "invalid"}`}>{rutValid ? "✓ RUT válido" : rutComplete ? "✕ RUT inválido" : "Completa el RUT"}</span>}</label>
+        </div></fieldset>
+
+        <fieldset><legend>Datos demográficos</legend><div className="formGrid">
+          <label>Fecha de nacimiento *<input name="birth_date" type="date" defaultValue={todayForInput()} max={todayForInput()} required/><small>Fecha de hoy asignada por defecto; confirma antes de guardar.</small></label>
+          <label>Sexo biológico *<select name="sex_biological_code" defaultValue="99"><option value="1">1 · Hombre</option><option value="2">2 · Mujer</option><option value="3">3 · Intersexual</option><option value="93">93 · No informado</option><option value="99">99 · Desconocido</option></select></label>
+          <label>Identidad de género *<select name="gender_code" defaultValue="7"><option value="1">1 · Masculino</option><option value="2">2 · Femenina</option><option value="3">3 · Transgénero masculino</option><option value="4">4 · Transgénero femenina</option><option value="5">5 · No binarie</option><option value="6">6 · Otra</option><option value="7">7 · No revelado</option></select></label>
+          <label>Estado civil *<select name="civil_status_code" defaultValue="99"><option value="1">1 · Soltero(a)</option><option value="2">2 · Casado(a)</option><option value="3">3 · Viudo(a)</option><option value="4">4 · Divorciado(a)</option><option value="5">5 · Separado(a) judicialmente</option><option value="6">6 · Conviviente civil</option><option value="99">99 · Desconocido</option></select></label>
+          <label>Código nacionalidad ISO 3166-1<input name="nationality_code" defaultValue="152" pattern="[0-9]{3}" required/></label>
+          <label>Glosa nacionalidad<input name="nationality_label" defaultValue="Chile" required/></label>
+          <label>Código país de origen<input name="origin_country_code" defaultValue="152" pattern="[0-9]{3}" required/></label>
+          <label>Glosa país de origen<input name="origin_country_label" defaultValue="Chile" required/></label>
+        </div></fieldset>
+
+        <details><summary>Previsión, educación, contacto y dirección CMBD</summary><div className="formGrid detailsGrid">
+          <label>Previsión *<select name="insurance_code" defaultValue="99"><option value="1">1 · FONASA</option><option value="2">2 · ISAPRE</option><option value="3">3 · CAPREDENA</option><option value="4">4 · DIPRECA</option><option value="5">5 · SISA</option><option value="96">96 · Ninguna</option><option value="99">99 · Desconocido</option></select></label>
+          <label>Nivel de instrucción *<select name="education_code" defaultValue="98"><option value="1">1 · Preescolar</option><option value="2">2 · Especial o diferencial</option><option value="3">3 · Básica o primaria</option><option value="4">4 · Media o secundaria</option><option value="5">5 · Educación superior</option><option value="6">6 · Sin instrucción</option><option value="97">97 · No recuerda</option><option value="98">98 · No responde</option></select></label>
+          <label>Último curso aprobado<input name="last_grade" type="number" min="0" max="8" defaultValue="0"/></label>
+          <label>Región *<select name="region_code" defaultValue="99"><option value="1">1 · Tarapacá</option><option value="2">2 · Antofagasta</option><option value="3">3 · Atacama</option><option value="4">4 · Coquimbo</option><option value="5">5 · Valparaíso</option><option value="6">6 · O’Higgins</option><option value="7">7 · Maule</option><option value="8">8 · Biobío</option><option value="9">9 · La Araucanía</option><option value="10">10 · Los Lagos</option><option value="11">11 · Aysén</option><option value="12">12 · Magallanes</option><option value="13">13 · Metropolitana</option><option value="14">14 · Los Ríos</option><option value="15">15 · Arica y Parinacota</option><option value="16">16 · Ñuble</option><option value="99">99 · Desconocido</option></select></label>
+          <label>Código comuna<input name="commune_code" maxLength={10}/></label><label>Glosa comuna<input name="commune_label" maxLength={120}/></label>
+          <label>Nombre de vía<input name="street_name" maxLength={180}/></label><label>Número de domicilio<input name="street_number" maxLength={30}/></label>
+          <label>Correo electrónico<input name="email" type="email" maxLength={254}/></label><label>Teléfono móvil (9 dígitos)<input name="phone" inputMode="numeric" pattern="[0-9]{9}" placeholder="912345678"/></label>
+        </div></details>
+        <p className="normNote">Implementación basada en la Norma Técnica EIS publicada por DEIS/MINSAL. No implica certificación ni homologación oficial.</p>
+        <div className="formActions"><button type="button" className="secondary" onClick={() => setShowForm(false)}>Cancelar</button><button className="primary" disabled={saving || (identifierType === "RUT" && !rutValid)}>{saving ? "Guardando…" : "Guardar paciente"}</button></div>
+      </form>
+    </article>}
   </div>;
 }
 

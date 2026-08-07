@@ -37,3 +37,19 @@ test("connects patient and conversion workflows to the backend proxy", async () 
   assert.match(api, /@app\.post\("\/v1\/conversions"/);
   assert.match(api, /@app\.get\("\/v1\/dashboard"/);
 });
+
+test("implements immediate RUT validation and the DEIS EIS CMBD structure", async () => {
+  const [page, api] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../services/api/main.py", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /function formatRutInput/);
+  assert.match(page, /function isValidRut/);
+  assert.match(page, /defaultValue=\{todayForInput\(\)\}/);
+  assert.match(page, /RUT válido/);
+  assert.match(api, /"norma": "MINSAL-DEIS-EIS"/);
+  assert.match(api, /"FechaNacimiento": payload\.birth_date\.strftime\("%d-%m-%Y"\)/);
+  assert.match(api, /"SexobiologicoCodigo"/);
+  assert.match(api, /"PrevisionCodigo"/);
+  assert.match(api, /"RegionCodigo"/);
+});
