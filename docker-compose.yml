@@ -8,10 +8,13 @@ services:
     env_file: .env
     environment:
       PORT: 8866
+      HOST: 0.0.0.0
+      API_URL: http://api:8000
       SECURE_COOKIE: "false"
       PROTOCOL: https
       WEBHOOK_URL: https://example.com
     depends_on:
+      api: { condition: service_healthy }
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     networks: [dicom_net]
@@ -21,6 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes: ["dicom_files:/data/uploads"]
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"], interval: 10s, timeout: 5s, retries: 8 }
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

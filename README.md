@@ -2,13 +2,35 @@
 
 Plataforma clínica y documental para convertir JPG, PNG, TIFF, BMP, TXT, CSV y DICOM; operar cargas individuales o por lote; organizar pacientes y estudios; visualizar DICOM; auditar acciones; generar reportes y gestionar documentos y relaciones (CRM).
 
-## Inicio local
+## Inicio con Docker Compose
 
 1. Copiar `.env.example` a `.env` y reemplazar contraseñas y secretos.
 2. Ejecutar `docker compose up -d --build`.
-3. Abrir `http://localhost:8866`. En producción, el proxy TLS publica `https://example.com` y reenvía al puerto 8866.
+3. Abrir `http://localhost:8866`. Desde otro equipo de la red, usar la IP del servidor, por ejemplo `http://192.168.31.147:8866`. En producción, el proxy TLS publica el dominio configurado y reenvía al puerto 8866.
 
-El servicio web solicitado se llama `todo_a_dicom`, publica el puerto 8866 y tiene `restart: unless-stopped`. API y workers no tienen nombre fijo, por lo que se pueden escalar con `docker compose up -d --scale api=3 --scale worker=5`.
+El contenedor web se llama `todo_a_dicom`, publica el puerto 8866 y tiene `restart: unless-stopped`. La API se mantiene dentro de la red privada de Compose y la aplicación web actúa como proxy. API y workers no tienen nombre fijo, por lo que se pueden escalar con `docker compose up -d --scale api=3 --scale worker=5`.
+
+Para reconstruir una actualización sin eliminar los datos persistentes:
+
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+docker compose ps
+```
+
+## Primera fase funcional
+
+- Resumen con métricas reales obtenidas desde PostgreSQL.
+- Registro y búsqueda de pacientes con validación de RUT.
+- Soporte para pasaporte, documento extranjero, identificador interno y otros identificadores.
+- Carga múltiple de JPG, PNG, TIFF, BMP, TXT, CSV, PDF y DICOM.
+- Creación persistente de lotes y conversiones.
+- Procesamiento asíncrono mediante Celery y Redis.
+- Seguimiento automático de estados: en cola, procesando, disponible o fallida.
+- Comunicación web–API a través de un proxy interno, sin publicar directamente el puerto 8000.
+
+Los módulos Exámenes, Visor DICOM, Documentos, CRM, Reportes y Auditoría se muestran como próxima fase y no presentan acciones simuladas.
 
 ## Arquitectura
 
@@ -29,4 +51,4 @@ La estrategia es SemVer (`v1.2.3`). Al publicar un tag, GitHub Actions construye
 
 ## Alcance actual y ruta a producción
 
-Este repositorio entrega un MVP ejecutable y una interfaz demostrable. Los contratos y el esquema están preparados para CRUD de usuarios/pacientes/archivos, recuperación por email, estudios, CMBD, auditoría, documentos y CRM. Las pantallas completas, endpoints restantes, envío SMTP, integración OHIF, antivirus, descarga ZIP con streaming y reportes firmados corresponden a la siguiente fase. Consultar `SECURITY.md` antes de usar datos reales.
+Este repositorio entrega un MVP funcional para registrar pacientes, cargar archivos y seguir conversiones. La autenticación, edición y archivo de pacientes, estudios completos, envío SMTP, integración OHIF, antivirus, descarga ZIP con streaming, documentos, CRM, auditoría y reportes firmados corresponden a fases posteriores. Consultar `SECURITY.md` antes de usar datos reales.
