@@ -2,12 +2,14 @@ import hashlib
 import os
 import uuid
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 import psycopg
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, field_validator
 
 from worker import convert_file
@@ -17,6 +19,13 @@ ORGANIZATION_ID = uuid.UUID(os.getenv("DEFAULT_ORGANIZATION_ID", "00000000-0000-
 storage = Path(os.getenv("STORAGE_PATH", "/data/uploads"))
 storage.mkdir(parents=True, exist_ok=True)
 allowed = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".txt", ".csv", ".pdf", ".dcm"}
+
+SEX_CODES = {1: "Hombre", 2: "Mujer", 3: "Intersexual", 93: "No informado", 99: "Desconocido"}
+GENDER_CODES = {1: "Masculino", 2: "Femenina", 3: "Transgénero masculino", 4: "Transgénero femenina", 5: "No binarie", 6: "Otra", 7: "No revelado"}
+CIVIL_STATUS_CODES = {1: "Soltero(a)", 2: "Casado(a)", 3: "Viudo(a)", 4: "Divorciado(a)", 5: "Separado(a) judicialmente", 6: "Conviviente civil", 99: "Desconocido"}
+INSURANCE_CODES = {1: "FONASA", 2: "ISAPRE", 3: "CAPREDENA", 4: "DIPRECA", 5: "SISA", 96: "Ninguna", 99: "Desconocido"}
+EDUCATION_CODES = {1: "Preescolar", 2: "Especial o diferencial", 3: "Básica o primaria", 4: "Media o secundaria", 5: "Educación superior", 6: "Sin instrucción", 97: "No recuerda", 98: "No responde"}
+REGION_CODES = {1: "Tarapacá", 2: "Antofagasta", 3: "Atacama", 4: "Coquimbo", 5: "Valparaíso", 6: "O’Higgins", 7: "Maule", 8: "Biobío", 9: "La Araucanía", 10: "Los Lagos", 11: "Aysén", 12: "Magallanes", 13: "Metropolitana de Santiago", 14: "Los Ríos", 15: "Arica y Parinacota", 16: "Ñuble", 99: "Desconocido"}
 
 app = FastAPI(title="DICOM Flow API", version="0.2.0")
 app.add_middleware(
@@ -68,10 +77,26 @@ def normalize_rut(value: str) -> str:
 class PatientCreate(BaseModel):
     given_names: str = Field(min_length=1, max_length=120)
     family_names: str = Field(min_length=1, max_length=120)
+    second_family_name: str | None = Field(default=None, max_length=120)
+    social_name: str | None = Field(default=None, max_length=120)
     identifier_type: str = "RUT"
     identifier_value: str = Field(min_length=1, max_length=80)
-    birth_date: str | None = None
-    sex: str | None = Field(default=None, max_length=30)
+    birth_date: date
+    sex_biological_code: int = 99
+    gender_code: int = 7
+    civil_status_code: int = 99
+    insurance_code: int = 99
+    education_code: int = 98
+    last_grade: int = Field(default=0, ge=0, le=8)
+    nationality_code: str = Field(default="152", pattern=r"^\d{3}$")
+    nationality_label: str = Field(default="Chile", max_length=100)
+    origin_country_code: str = Field(default="152", pattern=r"^\d{3}$")
+    origin_country_label: str = Field(default="Chile", max_length=100)
+    region_code: int = 99
+    commune_code: str | None = Field(default=None, max_length=10)
+    commune_label: str | None = Field(default=None, max_length=120)
+    street_name: str | None = Field(default=None, max_length=180)
+    street_number: str | None = Field(default=None, max_length=30)
     email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
 
@@ -87,6 +112,117 @@ class PatientCreate(BaseModel):
     @classmethod
     def clean_identifier(cls, value: str):
         return value.strip()
+
+    @field_validator("birth_date")
+    @classmethod
+    def valid_birth_date(cls, value: date):
+        if value > date.today():
+            raise ValueError("La fecha de nacimiento no puede ser futura")
+        return value
+
+    @field_validator("sex_biological_code")
+    @classmethod
+    def valid_sex_code(cls, value: int):
+        if value not in SEX_CODES:
+            raise ValueError("Código de sexo biológico no permitido por EIS")
+        return value
+
+    @field_validator("gender_code")
+    @classmethod
+    def valid_gender_code(cls, value: int):
+        if value not in GENDER_CODES:
+            raise ValueError("Código de identidad de género no permitido por EIS")
+        return value
+
+    @field_validator("civil_status_code")
+    @classmethod
+    def valid_civil_status(cls, value: int):
+        if value not in CIVIL_STATUS_CODES:
+            raise ValueError("Código de estado civil no permitido por EIS")
+        return value
+
+    @field_validator("insurance_code")
+    @classmethod
+    def valid_insurance(cls, value: int):
+        if value not in INSURANCE_CODES:
+            raise ValueError("Código de previsión no permitido por EIS")
+        return value
+
+    @field_validator("education_code")
+    @classmethod
+    def valid_education(cls, value: int):
+        if value not in EDUCATION_CODES:
+            raise ValueError("Código de nivel de instrucción no permitido por EIS")
+        return value
+
+    @field_validator("region_code")
+    @classmethod
+    def valid_region(cls, value: int):
+        if value not in REGION_CODES:
+            raise ValueError("Código de región no permitido por EIS")
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def valid_phone(cls, value: str | None):
+        if not value:
+            return None
+        normalized = "".join(character for character in value if character.isdigit())
+        if len(normalized) != 9 or not (normalized.startswith("9") or normalized[0] in "23456"):
+            raise ValueError("El teléfono debe contener 9 dígitos según EIS")
+        return normalized
+
+
+def build_cmbd(payload: PatientCreate, identifier_value: str):
+    identification = {
+        "Nombres": payload.given_names.strip(),
+        "PrimerApellido": payload.family_names.strip(),
+        "SegundoApellido": (payload.second_family_name or "").strip() or None,
+        "NombreSocial": (payload.social_name or "").strip() or None,
+    }
+    if payload.identifier_type == "RUT":
+        run, verifier = identifier_value.split("-")
+        identification.update({"Run": int(run), "DigitoVerificador": verifier})
+    else:
+        identification["OtraIdentificacion"] = identifier_value
+    return {
+        "norma": "MINSAL-DEIS-EIS",
+        "fuente": "https://deis.minsal.cl/norma-tecnica-de-estandares-de-informacion-en-salud-eis/",
+        "identificacionPersona": identification,
+        "datosDemograficos": {
+            "FechaNacimiento": payload.birth_date.strftime("%d-%m-%Y"),
+            "SexobiologicoCodigo": payload.sex_biological_code,
+            "SexobiologicoGlosa": SEX_CODES[payload.sex_biological_code],
+            "GeneroCodigo": payload.gender_code,
+            "GeneroGlosa": GENDER_CODES[payload.gender_code],
+            "NacionalidadCodigo": payload.nationality_code,
+            "NacionalidadGlosa": payload.nationality_label.strip(),
+            "PaisOrigenCodigo": payload.origin_country_code,
+            "PaisOrigenGlosa": payload.origin_country_label.strip(),
+        },
+        "situacionPersona": {
+            "EstadoCivilCodigo": payload.civil_status_code,
+            "EstadoCivilGlosa": CIVIL_STATUS_CODES[payload.civil_status_code],
+        },
+        "nivelInstruccion": {
+            "NivelInstruccionCodigo": payload.education_code,
+            "NivelInstruccionGlosa": EDUCATION_CODES[payload.education_code],
+            "UltimoCursoAprobado": payload.last_grade,
+        },
+        "prevision": {
+            "PrevisionCodigo": payload.insurance_code,
+            "PrevisionGlosa": INSURANCE_CODES[payload.insurance_code],
+        },
+        "contacto": {"TelefonoMovil": payload.phone, "CorreoElectronico": payload.email},
+        "ubicacionDireccion": {
+            "RegionCodigo": payload.region_code,
+            "RegionGlosa": REGION_CODES[payload.region_code],
+            "ComunaCodigo": payload.commune_code,
+            "ComunaGlosa": payload.commune_label,
+            "NombreVia": payload.street_name,
+            "NumeroDomicilio": payload.street_number,
+        },
+    }
 
 
 @app.get("/health")
@@ -104,7 +240,7 @@ def list_patients(search: str = Query(default="", max_length=120)):
         rows = connection.execute(
             """
             SELECT id, given_names, family_names, birth_date, sex,
-                   identifier_type, identifier_value, email, phone, created_at
+                   identifier_type, identifier_value, email, phone, cmbd, created_at
             FROM patients
             WHERE organization_id = %s AND archived_at IS NULL
               AND (%s = '%%' OR CONCAT_WS(' ', given_names, family_names, identifier_value, email) ILIKE %s)
@@ -125,20 +261,24 @@ def create_patient(payload: PatientCreate):
             identifier_value = rut_normalized
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+    cmbd = build_cmbd(payload, identifier_value)
+    family_names = " ".join(
+        value for value in [payload.family_names.strip(), (payload.second_family_name or "").strip()] if value
+    )
     with database() as connection:
         ensure_organization(connection)
         try:
             patient = connection.execute(
                 """
                 INSERT INTO patients (organization_id, given_names, family_names, birth_date, sex,
-                    identifier_type, identifier_value, rut_normalized, email, phone)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    identifier_type, identifier_value, rut_normalized, email, phone, cmbd)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, given_names, family_names, birth_date, sex,
-                          identifier_type, identifier_value, email, phone, created_at
+                          identifier_type, identifier_value, email, phone, cmbd, created_at
                 """,
-                (ORGANIZATION_ID, payload.given_names.strip(), payload.family_names.strip(),
-                 payload.birth_date or None, payload.sex or None, payload.identifier_type,
-                 identifier_value, rut_normalized, payload.email or None, payload.phone or None),
+                (ORGANIZATION_ID, payload.given_names.strip(), family_names,
+                 payload.birth_date, SEX_CODES[payload.sex_biological_code], payload.identifier_type,
+                 identifier_value, rut_normalized, payload.email or None, payload.phone, Jsonb(cmbd)),
             ).fetchone()
         except psycopg.errors.UniqueViolation as error:
             raise HTTPException(409, "Ya existe un paciente con ese identificador") from error
